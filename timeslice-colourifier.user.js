@@ -22,6 +22,8 @@ const jobSearch = /(J\d+)/;
 const taskSearch = /(.+)/;
 const cssSanitiser = /\W+/gi;
 const classPrefix = 'customColour_';
+const defaultSuffix = 'defaultColour';
+const defaultColourOptions = 10;
 
 // courtesy of https://stackoverflow.com/a/44615197/1543908
 const hexToLuma = (colour) => {
@@ -82,6 +84,10 @@ function setAndStoreValue(label, value, skipStore = false) {
     }
 }
 
+function getColourForLabel(label) {
+    return GM_getValue(label);
+}
+
 // combine job and task for ids to ensure proper grouping
 function generateLabel(job, task) {
     return (job + '_' + task).replace(cssSanitiser, '_');
@@ -92,6 +98,8 @@ function generateLabel(job, task) {
     'use strict';
 
     var $ = window.jQuery;
+
+    // entry editing
 
     function addColourPickerToModal(modalNode) {
         // create necessary HTML elements for our colour picker
@@ -152,34 +160,12 @@ function generateLabel(job, task) {
 
             var existingColour = GM_getValue(label);
             if (existingColour === undefined) {
-                // TODO default for new tasks
+                existingColour = determineDefaultColour();
             }
 
             picker.val(existingColour);
             wrapper.show();
         }
-    }
-
-    function handleSliceNode(dayNode) {
-        // remove any existing task classes on this node
-        var classes = dayNode.prop('class').split(' ');
-        for (let cls of classes) {
-            if (cls.startsWith(classPrefix)) {
-                dayNode.removeClass(cls);
-            }
-        }
-
-        // determine job ID and add it as a class for our colouring to apply
-        var job = dayNode.prop('title').match(jobSearchCard);
-        var task = dayNode.prop('title').match(taskSearchCard);
-
-        if (job == null || task == null) {
-            // TODO apply default
-            return;
-        }
-
-        var label = generateLabel(job[1], task[1]);
-        dayNode.addClass(`${classPrefix}${label}`);
     }
 
     function watchModalFieldChanges() {
@@ -206,17 +192,99 @@ function generateLabel(job, task) {
         }, 100);
     }
 
+    // entry colouring
+
+    function handleSliceNode(dayNode) {
+        // remove any existing task classes on this node
+        var classes = dayNode.prop('class').split(' ');
+        for (let cls of classes) {
+            if (cls.startsWith(classPrefix)) {
+                dayNode.removeClass(cls);
+            }
+        }
+
+        // determine job ID and add it as a class for our colouring to apply
+        var job = dayNode.prop('title').match(jobSearchCard);
+        var task = dayNode.prop('title').match(taskSearchCard);
+
+        var label;
+        if (job == null || task == null) {
+            label = defaultSuffix;
+        }
+        else {
+            label = generateLabel(job[1], task[1]);
+        }
+
+        if (!getColourForLabel(label)) {
+            label = defaultSuffix;
+        }
+
+        dayNode.addClass(`${classPrefix}${label}`);
+    }
+
+    // default entry colour management
+
+    function addDefaultColourPickerToSidebar() {
+        var sectionDiv = $(document.createElement('div'));
+        sectionDiv.prop('id', 'DefaultColourPicker');
+
+        var header = $(document.createElement('h3'));
+        header.addClass('colour-default-title');
+        header.text('Default Task Colour');
+
+        var picker = $(document.createElement('input'));
+        picker.addClass('colour-picker-default');
+        picker.prop('type', 'color');
+        picker.val(determineDefaultColour());
+
+        header.append(picker);
+        sectionDiv.append(header);
+        $(document).find('#Sidebar').append(sectionDiv);
+
+        // hook input to set the value (to both storage and style)
+        picker.on('input', function () {
+            var value = $(this).val();
+            setAndStoreValue(defaultSuffix, value);
+        });
+    }
+
+    function initDefaultColour() {
+        var colour = determineDefaultColour();
+
+        // ensure it's stored and has the class initialised
+        setAndStoreValue(defaultSuffix, colour);
+    }
+
+    function determineDefaultColour() {
+        var stored = GM_getValue(defaultSuffix);
+        if (stored) return stored;
+
+        // generate a random index to take a choice from the default colourset on first run, then save it for following page loads
+        var colIndex = Math.floor(Math.random() * defaultColourOptions);
+        var tempElement = $('<div>').addClass('coloredCheckbox').addClass('colour-' + colIndex).hide().appendTo('body');
+        var colour = tempElement.css('background-color');
+        tempElement.remove();
+
+        return '#' + rgbToHex(colour);
+    }
+
     // add necessary custom styling
     GM_addStyle('.colour-title-wrapper {display: flex; justify-content: space-between; align-items: center;}');
     GM_addStyle('.colour-picker-container {display: flex; align-items: center;}');
     GM_addStyle('.colour-picker-label {margin-right: 10px;}');
+    GM_addStyle('.colour-picker-default {margin: 0 8px; width: 22px; height: 24px;}');
+    GM_addStyle('.colour-default-title {display: flex; align-items: center;}');
 
     // enumerate stored values and add styles at page load
     var savedValues = GM_listValues();
     for (let key of savedValues) {
         var savedColour = GM_getValue(key);
+
         setAndStoreValue(key, savedColour, true);
     }
+
+    // initialise the default colour, if it hasn't been set before
+    initDefaultColour();
 
     // add an interval task to check if the job or task has changed
     watchModalFieldChanges();
@@ -229,5 +297,10 @@ function generateLabel(job, task) {
     // add the colour picker elements to the editor modal popup
     $(document).arrive('.ui-modal', function () {
         addColourPickerToModal($(this))
+    });
+
+    // add global config options to the sidebar
+    $(document).arrive('#CalendarUsers', function () {
+        addDefaultColourPickerToSidebar();
     });
 })();
