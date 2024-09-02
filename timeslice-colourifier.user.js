@@ -1,7 +1,9 @@
 // ==UserScript==
 // @name         Timeslice Colourifier
 // @namespace    com.azzo.timeslice
-// @version      1.0
+// @version      1.0.0
+// @downloadURL  https://github.com/AZZO/timeslice-colourifier/raw/main/timeslice-colourifier.user.js
+// @updateURL    https://github.com/AZZO/timeslice-colourifier/raw/main/timeslice-colourifier.user.js
 // @description  Apply per-job colouring to timeslice time slices
 // @author       Cary Symes
 // @match        https://go.timeslice.io/*
