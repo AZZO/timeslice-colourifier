@@ -16,9 +16,12 @@
 // @grant        GM_listValues
 // ==/UserScript==
 
-const jobSearch = /Job: (J\d+)/;
-const taskSearch = /Task: (.*)/;
+const jobSearchCard = /Job: (J\d+)/;
+const taskSearchCard = /Task: (.+)/;
+const jobSearch = /(J\d+)/;
+const taskSearch = /(.+)/;
 const cssSanitiser = /\W+/gi;
+const classPrefix = 'customColour_';
 
 // courtesy of https://stackoverflow.com/a/44615197/1543908
 const hexToLuma = (colour) => {
@@ -46,16 +49,16 @@ const hexToComplement = (colour, luma) => {
     g = ((g < 255) ? parseInt(g) : 255).toString(16);
     b = ((b < 255) ? parseInt(b) : 255).toString(16);
 
-    r = r.length == 1 ? ("0" + r) : r
-    g = g.length == 1 ? ("0" + g) : g
-    b = b.length == 1 ? ("0" + b) : b
+    r = r.length == 1 ? ('0' + r) : r
+    g = g.length == 1 ? ('0' + g) : g
+    b = b.length == 1 ? ('0' + b) : b
 
     return `#${r}${g}${b}`;
 };
 // courtesy of https://stackoverflow.com/a/49975078/1543908
 function rgbToHex(orig) {
     var rgb = orig.replace(/\s/g, '').match(/^rgba?\((\d+),(\d+),(\d+),?([^,\s)]+)?/i),
-        alpha = (rgb && rgb[4] || "").trim(),
+        alpha = (rgb && rgb[4] || '').trim(),
         hex = rgb ?
             (rgb[1] | 1 << 8).toString(16).slice(1) +
             (rgb[2] | 1 << 8).toString(16).slice(1) +
@@ -63,17 +66,25 @@ function rgbToHex(orig) {
 
     return hex;
 }
-function setAndStoreValue(label, value) {
+
+// add the necessary CSS styles to the page and persist the value in the backing data store
+function setAndStoreValue(label, value, skipStore = false) {
     // decide on a text colour that will give good contrast
     var luma = hexToLuma(value);
     var altColour = hexToComplement(value, luma);
 
-    // TODO edit existing style if present
-    GM_addStyle(`.${label} {background-color: ${value} !important; color: ${altColour} !important;}`);
-    GM_addStyle(`.${label} .day-event-tube {border-color: ${altColour} !important;}`);
+    GM_addStyle(`.${classPrefix}${label} {background-color: ${value} !important; color: ${altColour} !important;}`);
+    GM_addStyle(`.${classPrefix}${label} .day-event-tube {border-color: ${altColour} !important;}`);
 
-    // update the value in the store
-    GM_setValue(label, value);
+    if (!skipStore) {
+        // update the value in the store
+        GM_setValue(label, value);
+    }
+}
+
+// combine job and task for ids to ensure proper grouping
+function generateLabel(job, task) {
+    return (job + '_' + task).replace(cssSanitiser, '_');
 }
 
 
@@ -82,79 +93,141 @@ function setAndStoreValue(label, value) {
 
     var $ = window.jQuery;
 
-    function closePicker() {
-        //if($('.colour-picker').prop('job') == label) return;
-        $('.colour-modal').remove();
-    }
+    function addColourPickerToModal(modalNode) {
+        // create necessary HTML elements for our colour picker
+        var modalTitle = modalNode.find('#Title')
+        var wrapperDiv = $(document.createElement('div'))
+        wrapperDiv.addClass('colour-title-wrapper');
 
-    function popupEditModal(evt, label, defColour) {
-        // create a colour picker node
+        var floatDiv = $(document.createElement('div'))
+        floatDiv.addClass('colour-picker-container');
+
+        var label = $(document.createElement('span'))
+        label.addClass('colour-picker-label');
+        label.text('Task Customisation: ');
+
         var picker = $(document.createElement('input'))
         picker.addClass('colour-picker');
         picker.prop('type', 'color');
         picker.prop('job', label);
 
-        // set value (storage and style)
-        picker.on('input', function (cole) {
-            var value = cole.target.value;
+        floatDiv.append(label);
+        floatDiv.append(picker);
+
+        modalTitle.replaceWith(wrapperDiv);
+        wrapperDiv.append(modalTitle);
+        wrapperDiv.append(floatDiv);
+
+        // hook input to set the value (to both storage and style)
+        picker.on('input', function () {
+            var value = $(this).val();
+            var job = $(document).find('#Timesheet-Job').val().match(jobSearch)[1];
+            var task = $(document).find('#Timesheet-Task').val().match(taskSearch)[1];
+            var label = generateLabel(job, task);
             setAndStoreValue(label, value);
         });
 
-        // set value based on current/default
-        var prevColour = GM_getValue(label, defColour);
-        picker.prop('value', prevColour);
+        $(modalNode).find('#Timesheet-Save').on('click', function () {
+            // update the classes on the current entry
+            // unfortunately the easiest way to do this is to reapply the classes to all entries
+            $(document).find('.day-event').each(function () {
+                handleSliceNode($(this));
+            });
+        });
+    }
 
-        // offset to ensure mouse is over it
-        picker.css('left', evt.originalEvent.clientX - 10);
-        picker.css('top', evt.originalEvent.clientY - 15);
+    function onJobOrTaskChange() {
+        var wrapper = $(document).find('.colour-picker-container');
+        var picker = wrapper.find('input.colour-picker');
 
-        // create modal to detect mouse out
-        var modal = $(document.createElement('div'));
-        modal.addClass('colour-modal');
-        modal.mousemove(closePicker);
-        // destroy the picker when the modal detects mouse movement (i.e. it's outside the picker)
+        // set existing colour on picker
+        var job = $(document).find('#Timesheet-Job').val().match(jobSearch);
+        var task = $(document).find('#Timesheet-Task').val().match(taskSearch);
 
-        $('body').append(modal);
-        modal.append(picker);
-        picker.click(); // auto open the picker instead of showing the input field
+        if (job === null || task === null) {
+            wrapper.hide();
+            return;
+        } else {
+            var label = generateLabel(job[1], task[1]);
+
+            var existingColour = GM_getValue(label);
+            if (existingColour === undefined) {
+                // TODO default for new tasks
+            }
+
+            picker.val(existingColour);
+            wrapper.show();
+        }
     }
 
     function handleSliceNode(dayNode) {
+        // remove any existing task classes on this node
+        var classes = dayNode.prop('class').split(' ');
+        for (let cls of classes) {
+            if (cls.startsWith(classPrefix)) {
+                dayNode.removeClass(cls);
+            }
+        }
+
         // determine job ID and add it as a class for our colouring to apply
-        var job = dayNode.prop('title').match(jobSearch);
-        var task = dayNode.prop('title').match(taskSearch);
-        if (job == null || task == null) return;
-        // combine job and task for ids to ensure proper grouping
-        var label = (job[1] + '_' + task[1]).replace(cssSanitiser, '_');
-        dayNode.addClass(label);
+        var job = dayNode.prop('title').match(jobSearchCard);
+        var task = dayNode.prop('title').match(taskSearchCard);
 
-        // determine original colour - convert rgb() to hex and use as default
-        var defColour = rgbToHex(dayNode.css('background-color'));
+        if (job == null || task == null) {
+            // TODO apply default
+            return;
+        }
 
-
-
-        // create a colour picker trigger
-        var el = $(document.createElement('div'))
-        el.prop('title', 'Edit job colour');
-        el.addClass('colour-editor');
-        el.mouseenter(function (e) { popupEditModal(e, label, defColour) }); // attach to the colour picker trigger
-        dayNode.append(el);
+        var label = generateLabel(job[1], task[1]);
+        dayNode.addClass(`${classPrefix}${label}`);
     }
 
-    // add style for colour editors to use
-    GM_addStyle('.colour-editor {background-color: lightgray; width: 12px; height: 12px; position: absolute; top: 2px; right: 15px; border-radius: 2px;}');
-    GM_addStyle('.colour-picker {position: absolute; opacity: 0; height: 0;}');
-    GM_addStyle('.colour-modal {position: absolute; left: 0; top: 0; right: 0; bottom: 0; background-color: black; opacity: 0.0;}');
+    function watchModalFieldChanges() {
+        // can't use the input event due to the page itself manipulating the values directly
+        var prevJob = null;
+        var prevTask = null;
+        setInterval(function () {
+            var jobEl = $(document).find('#Timesheet-Job');
+            var taskEl = $(document).find('#Timesheet-Task')
 
-    // enumerate stored values and add styles
+            // check if the editor pane is open before doing anything
+            if (jobEl.length == 0 || taskEl.length == 0) {
+                return;
+            }
+
+            var job = jobEl.val().match(jobSearch);
+            var task = taskEl.val().match(taskSearch);
+
+            if (job !== prevJob || task !== prevTask) {
+                onJobOrTaskChange();
+                prevJob = job;
+                prevTask = task;
+            }
+        }, 100);
+    }
+
+    // add necessary custom styling
+    GM_addStyle('.colour-title-wrapper {display: flex; justify-content: space-between; align-items: center;}');
+    GM_addStyle('.colour-picker-container {display: flex; align-items: center;}');
+    GM_addStyle('.colour-picker-label {margin-right: 10px;}');
+
+    // enumerate stored values and add styles at page load
     var savedValues = GM_listValues();
     for (let key of savedValues) {
         var savedColour = GM_getValue(key);
-        setAndStoreValue(key, savedColour);
+        setAndStoreValue(key, savedColour, true);
     }
 
-    // I don't understand what Timeslice is doing, but you need to listen to 'leave' instead of 'arrive'
-    $(document).leave('.day-event', function () {
+    // add an interval task to check if the job or task has changed
+    watchModalFieldChanges();
+
+    // add style classes to all entries
+    $(document).arrive('.day-event', function () {
         handleSliceNode($(this));
+    });
+
+    // add the colour picker elements to the editor modal popup
+    $(document).arrive('.ui-modal', function () {
+        addColourPickerToModal($(this))
     });
 })();
